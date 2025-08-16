@@ -1,0 +1,18 @@
+severities:
+  critical: ["rule-21.6"]
+  high: ["rule-15.1"]
+  medium: ["rule-2.2"]
+  low: ["rule-10.1", "rule-13.4"]
+
+heuristics:
+  - pattern: "\\bgets\\s*\\("
+    rule: "rule-21.6"     # gets() shall not be used
+    severity: "critical"
+
+  - pattern: "\\bgoto\\b"
+    rule: "rule-15.1"     # goto shall not be used
+    severity: "high"
+
+  - pattern: "//"
+    rule: "rule-2.2"      # Example: C90 '//' comment usage
+    severity: "medium"

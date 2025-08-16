@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build-and-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (workspace)
+        run: cargo build --workspace --all-targets
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Self-test (scan example)
+        run: |
+          ./target/debug/misra_cli --source ./examples/c_project             --rules ./rulesets/misra-c-2012.yaml             --out dir:target/misra-ci             --gate "critical:0,high:10,medium:50,low:200" || true
+      - name: Upload self-test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-reports
+          path: target/misra-ci
