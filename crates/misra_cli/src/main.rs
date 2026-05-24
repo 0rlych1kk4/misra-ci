@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::PathBuf};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use walkdir::WalkDir;
@@ -35,16 +35,14 @@ struct RuleItem {
 
 #[derive(Debug, Deserialize, Default)]
 struct Rules {
-    // Accept "severities" from YAML, but we mark it unused internally.
     #[serde(default, rename = "severities")]
     _severities: HashMap<String, Vec<String>>,
 
-    // Make heuristics optional in YAML; default to empty list if absent.
     #[serde(default)]
     heuristics: Vec<RuleItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Finding {
     file: String,
     line: usize,
@@ -53,7 +51,7 @@ struct Finding {
     message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct ReportSummary {
     files_scanned: usize,
     total_findings: usize,
@@ -62,6 +60,14 @@ struct ReportSummary {
     medium: usize,
     low: usize,
     generated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonReport {
+    tool: String,
+    report_version: String,
+    summary: ReportSummary,
+    findings: Vec<Finding>,
 }
 
 fn main() -> Result<()> {
@@ -79,6 +85,7 @@ fn main() -> Result<()> {
     write_junit(&findings, &out_dir)?;
     write_html(&findings, &summary, &out_dir)?;
     write_sarif(&findings, &out_dir)?;
+    write_json(&findings, &summary, &out_dir)?;
 
     if let Some(err) = evaluate_gate(&findings, &args.gate) {
         eprintln!("{err}");
@@ -86,7 +93,7 @@ fn main() -> Result<()> {
     }
 
     println!(
-        "Completed. Reports at: {}/report.junit.xml, report.html, report.sarif.json",
+        "Completed. Reports at: {}/report.junit.xml, report.html, report.sarif.json, report.json",
         out_dir.display()
     );
 
@@ -424,7 +431,7 @@ tr:hover {{
 }
 
 fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifLog<'a> {
         version: &'a str,
         #[serde(rename = "$schema")]
@@ -432,23 +439,23 @@ fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
         runs: Vec<SarifRun<'a>>,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifRun<'a> {
         tool: SarifTool<'a>,
         results: Vec<SarifResult>,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifTool<'a> {
         driver: SarifDriver<'a>,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifDriver<'a> {
         name: &'a str,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifResult {
         #[serde(rename = "ruleId")]
         rule_id: String,
@@ -457,30 +464,30 @@ fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
         locations: Vec<SarifLocation>,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifMessage {
         text: String,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifLocation {
         #[serde(rename = "physicalLocation")]
         physical_location: SarifPhysicalLocation,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifPhysicalLocation {
         #[serde(rename = "artifactLocation")]
         artifact_location: SarifArtifactLocation,
         region: SarifRegion,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifArtifactLocation {
         uri: String,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct SarifRegion {
         #[serde(rename = "startLine")]
         start_line: usize,
@@ -525,6 +532,22 @@ fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
     fs::write(
         out_dir.join("report.sarif.json"),
         serde_json::to_string_pretty(&sarif)?,
+    )?;
+
+    Ok(())
+}
+
+fn write_json(findings: &[Finding], summary: &ReportSummary, out_dir: &PathBuf) -> Result<()> {
+    let report = JsonReport {
+        tool: "misra-ci".to_string(),
+        report_version: "1.0".to_string(),
+        summary: summary.clone(),
+        findings: findings.to_vec(),
+    };
+
+    fs::write(
+        out_dir.join("report.json"),
+        serde_json::to_string_pretty(&report)?,
     )?;
 
     Ok(())
