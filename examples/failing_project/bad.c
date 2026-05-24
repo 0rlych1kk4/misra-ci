@@ -4,14 +4,20 @@
 char buf[16];
 
 int main(void) {
-  /* Read input safely */
-  if (fgets(buf, sizeof(buf), stdin) == NULL) {
-    return 1; /* handle read failure */
+  /*
+   * Intentionally unsafe example for MISRA CI demonstration.
+   *
+   * This file is expected to fail the MISRA CI scan.
+   * It contains common unsafe C patterns that should be detected
+   * by heuristic rules, such as unsafe input and unsafe formatting.
+   */
+
+  gets(buf);        /* Unsafe: no bounds checking */
+  printf(buf);      /* Unsafe: format string is not controlled */
+
+  if (strlen(buf) > 0) {
+    return 0;
   }
 
-  /* Strip trailing newline if present */
-  buf[strcspn(buf, "\n")] = '\0';
-
-  printf("%s\n", buf);
   return 0;
 }
