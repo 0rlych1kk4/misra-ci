@@ -2,7 +2,11 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use walkdir::WalkDir;
 
@@ -310,7 +314,7 @@ fn build_summary(files_scanned: usize, findings: &[Finding]) -> Result<ReportSum
     })
 }
 
-fn write_junit(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
+fn write_junit(findings: &[Finding], out_dir: &Path) -> Result<()> {
     use junit_report::{Duration, Report, TestCase, TestSuite};
     use std::fs::File;
 
@@ -335,7 +339,7 @@ fn write_junit(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn write_html(findings: &[Finding], summary: &ReportSummary, out_dir: &PathBuf) -> Result<()> {
+fn write_html(findings: &[Finding], summary: &ReportSummary, out_dir: &Path) -> Result<()> {
     let status = if summary.total_findings == 0 {
         "Passed"
     } else {
@@ -556,7 +560,7 @@ tr:hover {{
     Ok(())
 }
 
-fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
+fn write_sarif(findings: &[Finding], out_dir: &Path) -> Result<()> {
     #[derive(Serialize)]
     struct SarifLog<'a> {
         version: &'a str,
@@ -663,7 +667,7 @@ fn write_sarif(findings: &[Finding], out_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn write_json(findings: &[Finding], summary: &ReportSummary, out_dir: &PathBuf) -> Result<()> {
+fn write_json(findings: &[Finding], summary: &ReportSummary, out_dir: &Path) -> Result<()> {
     let report = JsonReport {
         tool: "misra-ci".to_string(),
         report_version: "1.0".to_string(),
