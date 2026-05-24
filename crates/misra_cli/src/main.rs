@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -9,20 +9,63 @@ use walkdir::WalkDir;
 #[derive(Parser, Debug)]
 #[command(name = "misra-cli", version)]
 struct Args {
+    /// Optional config file, e.g. --config misra-ci.toml
+    #[arg(long)]
+    config: Option<PathBuf>,
+
     /// Source directory to scan
     #[arg(long)]
-    source: PathBuf,
+    source: Option<PathBuf>,
 
     /// Rules YAML (patterns + severities)
     #[arg(long)]
-    rules: PathBuf,
+    rules: Option<PathBuf>,
 
     /// Output directory, use: --out dir:<path>
     #[arg(long)]
-    out: String,
+    out: Option<String>,
 
     /// Gate thresholds, e.g. "critical:0,high:5,medium:20,low:100"
-    #[arg(long, default_value = "")]
+    #[arg(long)]
+    gate: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigFile {
+    source: Option<ConfigSource>,
+    rules: Option<ConfigRules>,
+    output: Option<ConfigOutput>,
+    gate: Option<ConfigGate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigSource {
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigRules {
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigOutput {
+    dir: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigGate {
+    critical: Option<usize>,
+    high: Option<usize>,
+    medium: Option<usize>,
+    low: Option<usize>,
+}
+
+#[derive(Debug)]
+struct EffectiveConfig {
+    source: PathBuf,
+    rules: PathBuf,
+    out_dir: PathBuf,
     gate: String,
 }
 
@@ -72,32 +115,115 @@ struct JsonReport {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let out_dir = parse_out_dir(&args.out)?;
-    fs::create_dir_all(&out_dir).context("failed to create output directory")?;
+    let config = resolve_config(args)?;
 
-    let rules: Rules = serde_yaml::from_str(&fs::read_to_string(&args.rules)?)
+    fs::create_dir_all(&config.out_dir).context("failed to create output directory")?;
+
+    let rules: Rules = serde_yaml::from_str(&fs::read_to_string(&config.rules)?)
         .context("failed to parse rules YAML")?;
 
-    let files = collect_source_files(&args.source);
+    let files = collect_source_files(&config.source);
     let findings = scan_files(&files, &rules)?;
     let summary = build_summary(files.len(), &findings)?;
 
-    write_junit(&findings, &out_dir)?;
-    write_html(&findings, &summary, &out_dir)?;
-    write_sarif(&findings, &out_dir)?;
-    write_json(&findings, &summary, &out_dir)?;
+    write_junit(&findings, &config.out_dir)?;
+    write_html(&findings, &summary, &config.out_dir)?;
+    write_sarif(&findings, &config.out_dir)?;
+    write_json(&findings, &summary, &config.out_dir)?;
 
-    if let Some(err) = evaluate_gate(&findings, &args.gate) {
+    if let Some(err) = evaluate_gate(&findings, &config.gate) {
         eprintln!("{err}");
         std::process::exit(2);
     }
 
     println!(
         "Completed. Reports at: {}/report.junit.xml, report.html, report.sarif.json, report.json",
-        out_dir.display()
+        config.out_dir.display()
     );
 
     Ok(())
+}
+
+fn resolve_config(args: Args) -> Result<EffectiveConfig> {
+    let file_config = if let Some(config_path) = args.config {
+        let content = fs::read_to_string(&config_path)
+            .with_context(|| format!("failed to read config file: {}", config_path.display()))?;
+
+        Some(
+            toml::from_str::<ConfigFile>(&content).with_context(|| {
+                format!("failed to parse config file: {}", config_path.display())
+            })?,
+        )
+    } else {
+        None
+    };
+
+    let source = args
+        .source
+        .or_else(|| {
+            file_config
+                .as_ref()
+                .and_then(|cfg| cfg.source.as_ref().map(|source| source.path.clone()))
+        })
+        .ok_or_else(|| {
+            anyhow!("missing source directory. Use --source or [source].path in config")
+        })?;
+
+    let rules = args
+        .rules
+        .or_else(|| {
+            file_config
+                .as_ref()
+                .and_then(|cfg| cfg.rules.as_ref().map(|rules| rules.path.clone()))
+        })
+        .ok_or_else(|| anyhow!("missing rules file. Use --rules or [rules].path in config"))?;
+
+    let out_dir = args
+        .out
+        .map(|out| parse_out_dir(&out))
+        .transpose()?
+        .or_else(|| {
+            file_config
+                .as_ref()
+                .and_then(|cfg| cfg.output.as_ref().map(|output| output.dir.clone()))
+        })
+        .ok_or_else(|| anyhow!("missing output directory. Use --out or [output].dir in config"))?;
+
+    let gate = args.gate.unwrap_or_else(|| {
+        file_config
+            .as_ref()
+            .and_then(|cfg| cfg.gate.as_ref().map(format_gate_from_config))
+            .unwrap_or_default()
+    });
+
+    Ok(EffectiveConfig {
+        source,
+        rules,
+        out_dir,
+        gate,
+    })
+}
+
+fn format_gate_from_config(gate: &ConfigGate) -> String {
+    let mut parts = vec![];
+
+    if let Some(value) = gate.critical {
+        parts.push(format!("critical:{value}"));
+    }
+
+    if let Some(value) = gate.high {
+        parts.push(format!("high:{value}"));
+    }
+
+    if let Some(value) = gate.medium {
+        parts.push(format!("medium:{value}"));
+    }
+
+    if let Some(value) = gate.low {
+        parts.push(format!("low:{value}"));
+    }
+
+    parts.join(",")
 }
 
 fn parse_out_dir(s: &str) -> Result<PathBuf> {

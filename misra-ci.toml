@@ -1,0 +1,14 @@
+[source]
+path = "examples/c_project"
+
+[rules]
+path = "rulesets/misra-c-2012.yaml"
+
+[output]
+dir = "target/misra-ci"
+
+[gate]
+critical = 0
+high = 0
+medium = 0
+low = 0
